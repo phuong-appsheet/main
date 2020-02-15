@@ -10,6 +10,7 @@ from mixpanel import Mixpanel
 import time
 from datetime import datetime, date, timedelta
 import os
+from intercom.client import Client
 from pt_utils.utils import send_email
 
 
@@ -17,6 +18,12 @@ from pt_utils.utils import send_email
 #import credentials object
 api_creator_secret = os.getenv('MIXPANEL_CREATOR_KEY')
 hubspot_key = os.environ.get('HUBSPOT_KEY')
+
+#intercom key
+#documentation: https://buildmedia.readthedocs.org/media/pdf/python-intercom/0.2.13/python-intercom.pdf
+#https://python-intercom.readthedocs.io/en/latest/
+intercom_key = os.getenv('INTERCOM_KEY')
+intercom = Client(personal_access_token=intercom_key)
 
 
 def mobile_preview_pull(from_date, to_date):
@@ -397,7 +404,8 @@ def user_pull():
                     "e.properties.hs_mrr",
                     "e.properties.company_category_industry",
                     "e.properties.AuthSource",
-                    "e.properties.$distinct_id"
+                    "e.properties.$distinct_id",
+                    "e.properties.$last_seen"
                 ],
                 accumulator=Reducer.count()
             )
@@ -417,6 +425,7 @@ def user_pull():
     company_category_industry_list = []
     auth_source_list = []
     distinct_id_list = []
+    last_seen_list = []
     
     #process query results
     for row in query_user.send():
@@ -433,14 +442,23 @@ def user_pull():
         company_category_industry_list.append(row['key'][10])
         auth_source_list.append(row['key'][11])
         distinct_id_list.append(row['key'][12])
+        last_seen_list.append(row['key'][13])
 
     #create dataframe 
     data = {'user_id': userid_list,'email':email_list, 'hs_analytics_num_page_views': hs_analytics_num_page_views_list,
            'hs_create_date': hs_create_date_list,'hs_zautomationsource': hs_zautomationsource_list, 'hs_analytics_source': hs_analytics_source_list,
            'company_foundedYear': company_foundedYear_list, 'company_metrics_employees': company_metrics_employees_list,
            'hs_lifecycle_stage': hs_lifecycle_stage_list, 'hs_mrr': hs_mrr_list,'company_category_industry': company_category_industry_list,
-           'auth_source': auth_source_list, 'mixpanel_distinct_id': distinct_id_list}
+           'auth_source': auth_source_list, 'mixpanel_distinct_id': distinct_id_list, 'last_seen': last_seen_list}
     df_users = pd.DataFrame(data=data)
+    
+    
+    #remove creators with missing last seen information
+    df_users = df_users[~df_users.last_seen.isnull()]
+    
+    #convert last seen datetime to acceptable format for Hubspot
+    df_users['last_seen'] = df_users.last_seen.apply(lambda x: str(datetime.strptime(x[4:15], '%b %d %Y')))
+    df_users['last_seen'] = df_users.last_seen.apply(lambda x: str(int((datetime(int(x[:4]),int(x[5:7]),int(x[8:10]))- datetime(1970, 1, 1)).total_seconds() * 1000)))
     
     return df_users
 
@@ -619,14 +637,14 @@ def model_execution(df_final, loaded_model):
     #generate ABM MQL dataframe
     df_ABM = df_ABM[['user_id', 'Email', 'Year Founded',
            'Number of Employees', 'Original Source Type', 'Number of Pageviews',
-           'Method','activity_score', 'auth_source', 'mixpanel_distinct_id']]
+           'Method','activity_score', 'auth_source', 'mixpanel_distinct_id', 'last_seen']]
 
     #only keep parameters used in model and filter out user IDs
     ABM_id_list = df_ABM.user_id.tolist()
     df_not_ABM = df_final[~df_final.user_id.isin(ABM_id_list)]
     df_not_ABM = df_not_ABM[['user_id','Email',
            'Year Founded', 'Number of Employees',
-           'Original Source Type', 'Number of Pageviews','activity_score','hs_mrr','sql_auth_info','company_category_industry', 'auth_source','mixpanel_distinct_id']]
+           'Original Source Type', 'Number of Pageviews','activity_score','hs_mrr','sql_auth_info','company_category_industry', 'auth_source','mixpanel_distinct_id', 'last_seen']]
 
     print('    Number of Contacts Remaining: ', len(df_not_ABM))
     print('')
@@ -655,14 +673,14 @@ def model_execution(df_final, loaded_model):
     #generate automatic MQL dataframe
     df_automatic = df_automatic[['user_id', 'Email', 'Year Founded',
            'Number of Employees', 'Original Source Type', 'Number of Pageviews',
-           'Method','activity_score', 'auth_source', 'mixpanel_distinct_id']]
+           'Method','activity_score', 'auth_source', 'mixpanel_distinct_id', 'last_seen']]
 
     #only keep parameters used in model
     auto_id_list = df_automatic.user_id.tolist()
     df_not_automatic = df_not_ABM[~df_not_ABM.user_id.isin(auto_id_list)]
     df_not_automatic = df_not_automatic[['user_id','Email',
            'Year Founded', 'Number of Employees',
-           'Original Source Type', 'Number of Pageviews','activity_score', 'auth_source', 'mixpanel_distinct_id']]
+           'Original Source Type', 'Number of Pageviews','activity_score', 'auth_source', 'mixpanel_distinct_id', 'last_seen']]
 
     print('    Number of Contacts Remaining: ', len(df_not_automatic))
     print('')
@@ -706,7 +724,7 @@ def model_execution(df_final, loaded_model):
     #generate ML model MQL dataframe
     df_new_model = df_new_model[['user_id', 'Email','Year Founded',
            'Number of Employees', 'Original Source Type', 'Number of Pageviews',
-           'Method','activity_score', 'auth_source', 'mixpanel_distinct_id']]
+           'Method','activity_score', 'auth_source', 'mixpanel_distinct_id', 'last_seen']]
 
     #only include contacts that do not have all the fields needed by the New Model
     company_model_id_list = df_new_model.user_id.tolist()
@@ -740,7 +758,7 @@ def model_execution(df_final, loaded_model):
     df_activity['Method'] = 'Activity'
     df_activity = df_activity[[ 'user_id', 'Email', 'Year Founded',
            'Number of Employees', 'Original Source Type', 'Number of Pageviews',
-           'Method','activity_score', 'auth_source', 'mixpanel_distinct_id']]
+           'Method','activity_score', 'auth_source', 'mixpanel_distinct_id', 'last_seen']]
 
     #print number of contacts going through random sample
     print('    Number of Contacts Remaining: ', len(df_remaining))
@@ -761,7 +779,7 @@ def model_execution(df_final, loaded_model):
     df_final_MQLs = df_final_MQLs[['user_id', 'Email','Method','activity_score','auth_source', 'Year Founded', 'Number of Employees', 'Original Source Type',
            'Number of Pageviews', 'subscribe_email',
            'home_page', 'editor', 'MobilePreview', 'sql_auth_info',
-           'Lifecycle Stage', 'company_category_industry', 'hs_mrr', 'mixpanel_distinct_id']]
+           'Lifecycle Stage', 'company_category_industry', 'hs_mrr', 'mixpanel_distinct_id', 'last_seen']]
     
     #remove duplicate contacts
     df_final_MQLs = df_final_MQLs.drop_duplicates('Email')
@@ -799,7 +817,7 @@ def prep_MQL_data(df_final_MQLs):
     #only keep features evaluated before sending to Sales team
     df_final_MQLs = df_final_MQLs[['user_id', 'Email','Method','Lifecycle Stage', 'activity_score', 'Year Founded', 'Number of Employees', 'Original Source Type',
            'Number of Pageviews', 'subscribe_email',
-           'home_page', 'editor', 'MobilePreview', 'auth_source', 'sql_auth_info', 'company_category_industry','hs_mrr', 'mixpanel_distinct_id']]
+           'home_page', 'editor', 'MobilePreview', 'auth_source', 'sql_auth_info', 'company_category_industry','hs_mrr', 'mixpanel_distinct_id', 'last_seen']]
 
     #drop any duplicate contacts and filter out app creators who are students and were part of Growth Marketing user interviews
     df_final_MQLs = df_final_MQLs.drop_duplicates('Email')
@@ -872,7 +890,7 @@ def add_contacts_to_hubspot_list(email_list, method):
     r = requests.post(data=data, url=url, headers=headers)
     
     
-def push_mqls_to_hubspot(email_list, reason_list, MRR_list, mixpanel_distinct_id_list, method):
+def push_mqls_to_hubspot(email_list, reason_list, MRR_list, mixpanel_distinct_id_list, last_seen_list, method):
 
     """
     
@@ -893,6 +911,9 @@ def push_mqls_to_hubspot(email_list, reason_list, MRR_list, mixpanel_distinct_id
         
     mixpanel_distinct_id_list: list
         List of Mixpanel distinct IDs
+    
+    last_seen_list: list
+        List of Mixpanel last seen dates.
         
     method: str
         String of MQL reason. It is the higher level reason than those in reason_list.
@@ -915,7 +936,7 @@ def push_mqls_to_hubspot(email_list, reason_list, MRR_list, mixpanel_distinct_id
     
     
     #push MQLs to HubSpot
-    for email,reason,MRR,mixpanel_distinct_id in zip(email_list,reason_list, MRR_list,mixpanel_distinct_id_list):
+    for email, reason, MRR, mixpanel_distinct_id, last_seen in zip(email_list,reason_list, MRR_list,mixpanel_distinct_id_list, last_seen_list):
         
         #generate Mixpanel profile, /manage, and app user domains links
         mixpanel_profile_link = 'https://mixpanel.com/report/487607/explore#user?distinct_id=' + mixpanel_distinct_id
@@ -957,6 +978,10 @@ def push_mqls_to_hubspot(email_list, reason_list, MRR_list, mixpanel_distinct_id
             {
               "property": "app_user_domains",
               "value": app_user_domains_link
+            },
+            {
+              "property": "mixpanel_last_activity_date",
+              "value": last_seen
             }
           ]
         })
@@ -1004,6 +1029,10 @@ def push_mqls_to_hubspot(email_list, reason_list, MRR_list, mixpanel_distinct_id
                                 {
                                   "property": "app_user_domains",
                                   "value": app_user_domains_link
+                                },
+                                {
+                                  "property": "mixpanel_last_activity_date",
+                                  "value": last_seen
                                 }
                               ]
                             })
@@ -1017,6 +1046,60 @@ def push_mqls_to_hubspot(email_list, reason_list, MRR_list, mixpanel_distinct_id
     #add contact to HubSpot list based on qualification method
     add_contacts_to_hubspot_list(email_list, method)
 
+def push_leads_to_intercom(email_list, method):
+
+    """
+    
+    Tag generated leads in Intercom.
+    
+    
+    Parameters
+    ----------
+    
+    email_list: list
+        List of emails.
+        
+    method: str
+        String of MQL method.
+        
+        
+    Global Variables
+    ----------
+    
+    
+    Returns
+    ----------
+    
+    None
+        Function tags leads in Intercom.
+    
+    """
+
+    #append 'lead'
+    method = 'lead_' + method
+    
+    #push MQLs to HubSpot
+    for email in email_list:
+        try:
+            
+            #find user in Intercom
+            user = intercom.users.find(email=email)
+            
+            #check if lead has been qualified. If not, then tag lead.
+            if 'lead_tag_date_at' not in user.custom_attributes.keys():
+            
+                #tag lead
+                intercom.tags.tag(name=method, users=[{'email': email}])
+
+                #update lead tagged date
+                user.custom_attributes["lead_tag_date_at"] = int(time.mktime(datetime.today().timetuple()))
+                intercom.users.save(user)
+                
+            else:
+                print('Lead has been tagged.')
+            
+        except Exception as e: 
+            print(e)
 
     
 def push_ABM_MQLs(df_final_MQLs):
@@ -1049,14 +1132,15 @@ def push_ABM_MQLs(df_final_MQLs):
     df_final_MQLs_ABM = df_final_MQLs[df_final_MQLs['Method']=='ABM']
     df_final_MQLs_ABM['reason'] = 'ABM Account - Check Mixpanel user profile.'
 
-    #generate email, reason, mrr, mixpanel_id lists
+    #generate email, reason, mrr, mixpanel id, and last seen lists
     email_list = df_final_MQLs_ABM.Email.tolist()
     reason_list = df_final_MQLs_ABM.reason.tolist()
     MRR_list = df_final_MQLs_ABM.hs_mrr.tolist()
     mixpanel_distinct_id_list = df_final_MQLs_ABM.mixpanel_distinct_id.tolist()
+    last_seen_list = df_final_MQLs_ABM.last_seen.tolist()
     
     #push MQLs to hubspot
-    push_mqls_to_hubspot(email_list, reason_list, MRR_list, mixpanel_distinct_id_list, 'ABM')
+    push_mqls_to_hubspot(email_list, reason_list, MRR_list, mixpanel_distinct_id_list, last_seen_list, 'ABM')
     print('Total ABM MQLs:', len(email_list))
                                                     
         
@@ -1094,16 +1178,18 @@ def push_construction_MQLs(df_final_MQLs):
     df_final_MQLs_Construction['reason'] = 'Construction Company - Check Mixpanel user profile.'
 
     #MQL cap
-    df_final_MQLs_Construction = df_final_MQLs_Construction.head(2)
+#     df_final_MQLs_Construction = df_final_MQLs_Construction.head(2)
 
-    #generate email, reason, mrr and mixpanel id lists
+    #generate email, reason, mrr, mixpanel id, and last seen lists
     email_list = df_final_MQLs_Construction.Email.tolist()
     reason_list = df_final_MQLs_Construction.reason.tolist()
     MRR_list = df_final_MQLs_Construction.hs_mrr.tolist()
     mixpanel_distinct_id_list = df_final_MQLs_Construction.mixpanel_distinct_id.tolist()
+    last_seen_list = df_final_MQLs_Construction.last_seen.tolist()
     
     #push MQLs to hubspot
-    push_mqls_to_hubspot(email_list, reason_list, MRR_list, mixpanel_distinct_id_list, 'construction')
+#     push_mqls_to_hubspot(email_list, reason_list, MRR_list, mixpanel_distinct_id_list, last_seen_list, 'construction')
+    push_leads_to_intercom(email_list, 'construction')
     print('Total Construction MQLs:', len(email_list))
     
     
@@ -1142,22 +1228,24 @@ def push_Renewable_Electricity_MQLs(df_final_MQLs):
     df_final_MQLs_Renewable_Electricity['reason'] = 'Renewable Electricity Company - Check Mixpanel user profile.'
 
     #MQL cap
-    df_final_MQLs_Renewable_Electricity = df_final_MQLs_Renewable_Electricity.head(2)
+#     df_final_MQLs_Renewable_Electricity = df_final_MQLs_Renewable_Electricity.head(2)
 
-    #generate email, reason, mrr and mixpanel id lists
+    #generate email, reason, mrr, mixpanel id, and last seen lists
     email_list = df_final_MQLs_Renewable_Electricity.Email.tolist()
     reason_list = df_final_MQLs_Renewable_Electricity.reason.tolist()
     MRR_list = df_final_MQLs_Renewable_Electricity.hs_mrr.tolist()
     mixpanel_distinct_id_list = df_final_MQLs_Renewable_Electricity.mixpanel_distinct_id.tolist()
+    last_seen_list = df_final_MQLs_Renewable_Electricity.last_seen.tolist()
     
     #push MQLs to hubspot
-    push_mqls_to_hubspot(email_list, reason_list, MRR_list, mixpanel_distinct_id_list, 'renewable_electricity')
+#     push_mqls_to_hubspot(email_list, reason_list, MRR_list, mixpanel_distinct_id_list, last_seen_list, 'renewable_electricity')
+    push_leads_to_intercom(email_list, 'renewable_electricity')
     print('Total Renewable Electricity MQLs:', len(email_list))
     
     
 def push_Electrical_Equipment_MQLs(df_final_MQLs):
     
-    """
+    """ 
     
     Generate reasons and send Electrical Equipment MQLs over to HubSpot.
     
@@ -1189,16 +1277,18 @@ def push_Electrical_Equipment_MQLs(df_final_MQLs):
     df_final_MQLs_Electrical_Equipment['reason'] = 'Electrical Equipment Company - Check Mixpanel user profile.'
 
     #MQL cap
-    df_final_MQLs_Electrical_Equipment = df_final_MQLs_Electrical_Equipment.head(2)
+#     df_final_MQLs_Electrical_Equipment = df_final_MQLs_Electrical_Equipment.head(2)
 
-    #generate email, reason, mrr and mixpanel id lists
+    #generate email, reason, mrr, mixpanel id, and last seen lists
     email_list = df_final_MQLs_Electrical_Equipment.Email.tolist()
     reason_list = df_final_MQLs_Electrical_Equipment.reason.tolist()
     MRR_list = df_final_MQLs_Electrical_Equipment.hs_mrr.tolist()
     mixpanel_distinct_id_list = df_final_MQLs_Electrical_Equipment.mixpanel_distinct_id.tolist()
+    last_seen_list = df_final_MQLs_Electrical_Equipment.last_seen.tolist()
     
     #push MQLs to hubspot
-    push_mqls_to_hubspot(email_list, reason_list, MRR_list, mixpanel_distinct_id_list, 'electrical_equipment')
+#     push_mqls_to_hubspot(email_list, reason_list, MRR_list, mixpanel_distinct_id_list, last_seen_list, 'electrical_equipment')
+    push_leads_to_intercom(email_list, 'electrical_equipment')
     print('Total Electrical Equipment MQLs:', len(email_list))
     
 def push_Gas_Utilities_MQLs(df_final_MQLs):
@@ -1235,16 +1325,18 @@ def push_Gas_Utilities_MQLs(df_final_MQLs):
     df_final_MQLs_Gas_Utilities['reason'] = 'Gas Utilities Company - Check Mixpanel user profile.'
 
     #MQL cap
-    df_final_MQLs_Gas_Utilities = df_final_MQLs_Gas_Utilities.head(2)
+#     df_final_MQLs_Gas_Utilities = df_final_MQLs_Gas_Utilities.head(2)
 
-    #generate email, reason, mrr and mixpanel id lists
+    #generate email, reason, mrr, mixpanel id, and last seen lists
     email_list = df_final_MQLs_Gas_Utilities.Email.tolist()
     reason_list = df_final_MQLs_Gas_Utilities.reason.tolist()
     MRR_list = df_final_MQLs_Gas_Utilities.hs_mrr.tolist()
     mixpanel_distinct_id_list = df_final_MQLs_Gas_Utilities.mixpanel_distinct_id.tolist()
+    last_seen_list = df_final_MQLs_Gas_Utilities.last_seen.tolist()
     
     #push MQLs to hubspot
-    push_mqls_to_hubspot(email_list, reason_list, MRR_list, mixpanel_distinct_id_list, 'gas_utilities')
+#     push_mqls_to_hubspot(email_list, reason_list, MRR_list, mixpanel_distinct_id_list, last_seen_list, 'gas_utilities')
+    push_leads_to_intercom(email_list, 'gas_utilities')
     print('Total Gas Utilities MQLs:', len(email_list))
 
 def push_Electric_Utilities_MQLs(df_final_MQLs):
@@ -1281,16 +1373,18 @@ def push_Electric_Utilities_MQLs(df_final_MQLs):
     df_final_MQLs_Electric_Utilities['reason'] = 'Electric Utilities Company - Check Mixpanel user profile.'
 
     #MQL cap
-    df_final_MQLs_Electric_Utilities = df_final_MQLs_Electric_Utilities.head(2)
+#     df_final_MQLs_Electric_Utilities = df_final_MQLs_Electric_Utilities.head(2)
 
-    #generate email, reason, mrr and mixpanel id lists
+    #generate email, reason, mrr, mixpanel id, and last seen lists
     email_list = df_final_MQLs_Electric_Utilities.Email.tolist()
     reason_list = df_final_MQLs_Electric_Utilities.reason.tolist()
     MRR_list = df_final_MQLs_Electric_Utilities.hs_mrr.tolist()
     mixpanel_distinct_id_list = df_final_MQLs_Electric_Utilities.mixpanel_distinct_id.tolist()
+    last_seen_list = df_final_MQLs_Electric_Utilities.last_seen.tolist()
     
     #push MQLs to hubspot
-    push_mqls_to_hubspot(email_list, reason_list, MRR_list, mixpanel_distinct_id_list, 'electric_utilities')
+#     push_mqls_to_hubspot(email_list, reason_list, MRR_list, mixpanel_distinct_id_list, last_seen_list, 'electric_utilities')
+    push_leads_to_intercom(email_list, 'electric_utilities')
     print('Total Electric Utilities MQLs:', len(email_list))
     
 def push_Utilities_MQLs(df_final_MQLs):
@@ -1327,16 +1421,18 @@ def push_Utilities_MQLs(df_final_MQLs):
     df_final_MQLs_Utilities['reason'] = 'Utilities Company - Check Mixpanel user profile.'
 
     #MQL cap
-    df_final_MQLs_Utilities = df_final_MQLs_Utilities.head(2)
+#     df_final_MQLs_Utilities = df_final_MQLs_Utilities.head(2)
 
-    #generate email, reason, mrr and mixpanel id lists
+    #generate email, reason, mrr, mixpanel id, and last seen lists
     email_list = df_final_MQLs_Utilities.Email.tolist()
     reason_list = df_final_MQLs_Utilities.reason.tolist()
     MRR_list = df_final_MQLs_Utilities.hs_mrr.tolist()
     mixpanel_distinct_id_list = df_final_MQLs_Utilities.mixpanel_distinct_id.tolist()
+    last_seen_list = df_final_MQLs_Utilities.last_seen.tolist()
     
     #push MQLs to hubspot
-    push_mqls_to_hubspot(email_list, reason_list, MRR_list, mixpanel_distinct_id_list, 'utilities')
+#     push_mqls_to_hubspot(email_list, reason_list, MRR_list, mixpanel_distinct_id_list, last_seen_list, 'utilities')
+    push_leads_to_intercom(email_list, 'utilities')
     print('Total Utilities MQLs:', len(email_list))
     
                                                     
@@ -1370,31 +1466,36 @@ def push_mrr_MQLs(df_final_MQLs):
     df_final_MQLs_Auto = df_final_MQLs[df_final_MQLs['Method']=='Automatic']
 
     #get contacts who were automatically qualified by MRR that would not have fallen under the other reasons
-    df_final_MQLs_MRR = df_final_MQLs_Auto[(df_final_MQLs_Auto['hs_mrr']>50)&(df_final_MQLs_Auto['company_category_industry']!='Construction & Engineering')
+    df_final_MQLs_MRR = df_final_MQLs_Auto[(df_final_MQLs_Auto['hs_mrr']>100)&(df_final_MQLs_Auto['company_category_industry']!='Construction & Engineering')
                                           &(df_final_MQLs_Auto['company_category_industry']!='Renewable Electricity')
                                           &(df_final_MQLs_Auto['company_category_industry']!='Electrical Equipment')
                                           &(df_final_MQLs_Auto['company_category_industry']!='Gas Utilities')
                                           &(df_final_MQLs_Auto['company_category_industry']!='Electric Utilities')
-                                          &(df_final_MQLs_Auto['company_category_industry']!='Utilities')]
+                                          &(df_final_MQLs_Auto['company_category_industry']!='Utilities')] #increased to 100 from 50
+      
+                        
+                        
     df_final_MQLs_MRR['reason'] = 'High MRR User - Check Manage and Mixpanel activity dashboard.'
 
     #MQL cap
-    df_final_MQLs_MRR = df_final_MQLs_MRR.sort_values('hs_mrr',ascending=False).head(8)
+#     df_final_MQLs_MRR = df_final_MQLs_MRR.sort_values('hs_mrr',ascending=False).head(2)
 
-    #generate email, reason, mrr and mixpanel id lists
+    #generate email, reason, mrr, mixpanel id, and last seen lists
     email_list = df_final_MQLs_MRR.Email.tolist()
     reason_list = df_final_MQLs_MRR.reason.tolist()
     MRR_list = df_final_MQLs_MRR.hs_mrr.tolist()
     mixpanel_distinct_id_list = df_final_MQLs_MRR.mixpanel_distinct_id.tolist()
+    last_seen_list = df_final_MQLs_MRR.last_seen.tolist()
     
     #push MQLs to hubspot
-    push_mqls_to_hubspot(email_list, reason_list, MRR_list, mixpanel_distinct_id_list, 'MRR')
+#     push_mqls_to_hubspot(email_list, reason_list, MRR_list, mixpanel_distinct_id_list, last_seen_list, 'MRR')
+    push_leads_to_intercom(email_list, 'MRR')
     print('Total MRR MQLs:', len(email_list))
     
 
 def push_company_size_MQLs(df_final_MQLs):
     
-    """
+    """ 
     
     Generate reasons and send Company Size MQLs over to HubSpot.
     
@@ -1422,26 +1523,29 @@ def push_company_size_MQLs(df_final_MQLs):
     df_final_MQLs_Auto = df_final_MQLs[df_final_MQLs['Method']=='Automatic']
 
     #get contacts who were automatically qualified by company size that would not have fallen under the other reasons
-    df_final_MQLs_Company_Size = df_final_MQLs_Auto[(df_final_MQLs_Auto.sql_auth_info.isnull()) & (df_final_MQLs_Auto['company_category_industry']!='Construction & Engineering')
+    df_final_MQLs_Company_Size = df_final_MQLs_Auto[(df_final_MQLs_Auto.sql_auth_info.isnull()) & (df_final_MQLs_Auto['hs_mrr']<=100) 
+                                                    &(df_final_MQLs_Auto['company_category_industry']!='Construction & Engineering')
                                                     &(df_final_MQLs_Auto['company_category_industry']!='Renewable Electricity')
                                                     &(df_final_MQLs_Auto['company_category_industry']!='Electrical Equipment')
                                                     &(df_final_MQLs_Auto['company_category_industry']!='Gas Utilities')
                                                     &(df_final_MQLs_Auto['company_category_industry']!='Electric Utilities')
                                                     &(df_final_MQLs_Auto['company_category_industry']!='Utilities')
-                                                    & (df_final_MQLs_Auto['hs_mrr']<=50) & (df_final_MQLs_Auto['Number of Employees']>500)]
+                                                    &(df_final_MQLs_Auto['Number of Employees']>500)] #moved emplyee size from 50 to 5000
+                 
     df_final_MQLs_Company_Size['reason'] = 'Company Size - Check Mixpanel user profile.'
 
     #MQL cap
-    df_final_MQLs_Company_Size = df_final_MQLs_Company_Size.sort_values('Number of Employees',ascending=False).head(15)
+    df_final_MQLs_Company_Size = df_final_MQLs_Company_Size.sort_values('Number of Employees',ascending=False).head(8) #moved from 15 to 8
 
-    #generate email, reason, mrr and mixpanel id lists
+    #generate email, reason, mrr, mixpanel id, and last seen lists
     email_list = df_final_MQLs_Company_Size.Email.tolist()
     reason_list = df_final_MQLs_Company_Size.reason.tolist()
     MRR_list = df_final_MQLs_Company_Size.hs_mrr.tolist()
     mixpanel_distinct_id_list = df_final_MQLs_Company_Size.mixpanel_distinct_id.tolist()
+    last_seen_list = df_final_MQLs_Company_Size.last_seen.tolist()
     
     #push MQLs to hubspot
-    push_mqls_to_hubspot(email_list, reason_list, MRR_list, mixpanel_distinct_id_list, 'company_size')
+    push_mqls_to_hubspot(email_list, reason_list, MRR_list, mixpanel_distinct_id_list, last_seen_list, 'company_size')
     print('Total Company Size MQLs:', len(email_list))
 
     
@@ -1475,26 +1579,32 @@ def push_smartsheet_MQLs(df_final_MQLs):
     df_final_MQLs_Auto = df_final_MQLs[df_final_MQLs['Method']=='Automatic']
 
     #get contacts who were automatically qualified by smartsheet auth that would not have fallen under the other reasons
-    df_final_MQLs_smartsheet = df_final_MQLs_Auto[((df_final_MQLs_Auto['Number of Employees'].isnull()) | (df_final_MQLs_Auto['Number of Employees']<=500)) & (df_final_MQLs_Auto['company_category_industry']!='Construction & Engineering') 
+    df_final_MQLs_smartsheet = df_final_MQLs_Auto[((df_final_MQLs_Auto['Number of Employees'].isnull()) | (df_final_MQLs_Auto['Number of Employees']<=500)) & (df_final_MQLs_Auto['hs_mrr']<=100)
+                                                  &(df_final_MQLs_Auto['company_category_industry']!='Construction & Engineering') 
                                                   &(df_final_MQLs_Auto['company_category_industry']!='Renewable Electricity')
                                                   &(df_final_MQLs_Auto['company_category_industry']!='Electrical Equipment')
                                                   &(df_final_MQLs_Auto['company_category_industry']!='Gas Utilities')
                                                   &(df_final_MQLs_Auto['company_category_industry']!='Electric Utilities')
-                                                  &(df_final_MQLs_Auto['company_category_industry']!='Utilities')                                  
-                                                  & (df_final_MQLs_Auto['hs_mrr']<=50) & (df_final_MQLs_Auto['auth_source']=='smartsheet')]
+                                                  &(df_final_MQLs_Auto['company_category_industry']!='Utilities') 
+                                                  &(df_final_MQLs_Auto['auth_source']=='smartsheet')]
+    
+    
+    
     df_final_MQLs_smartsheet['reason'] = 'Authenticated with Smartsheet - Check Mixpanel user profile.'
 
     #MQL cap
-    df_final_MQLs_smartsheet = df_final_MQLs_smartsheet.sort_values('editor',ascending=False).head(5)
+#     df_final_MQLs_smartsheet = df_final_MQLs_smartsheet.sort_values('editor',ascending=False).head(2)
 
-    #generate email, reason, mrr and mixpanel id lists
+    #generate email, reason, mrr, mixpanel id, and last seen lists
     email_list = df_final_MQLs_smartsheet.Email.tolist()
     reason_list = df_final_MQLs_smartsheet.reason.tolist()
     MRR_list = df_final_MQLs_smartsheet.hs_mrr.tolist()
     mixpanel_distinct_id_list = df_final_MQLs_smartsheet.mixpanel_distinct_id.tolist()
+    last_seen_list = df_final_MQLs_smartsheet.last_seen.tolist()
     
     #push MQLs to hubspot
-    push_mqls_to_hubspot(email_list, reason_list, MRR_list, mixpanel_distinct_id_list, 'smartsheet') 
+#     push_mqls_to_hubspot(email_list, reason_list, MRR_list, mixpanel_distinct_id_list, last_seen_list, 'smartsheet')
+    push_leads_to_intercom(email_list, 'smartsheet')
     print('Total Smartsheet MQLs:', len(email_list))
     
 def push_sql_MQLs(df_final_MQLs):
@@ -1527,26 +1637,31 @@ def push_sql_MQLs(df_final_MQLs):
     df_final_MQLs_Auto = df_final_MQLs[df_final_MQLs['Method']=='Automatic']
 
     #get contacts who were automatically qualified by sql auth info that would not have fallen under the other reasons
-    df_final_MQLs_SQL = df_final_MQLs_Auto[((df_final_MQLs_Auto['Number of Employees'].isnull()) | (df_final_MQLs_Auto['Number of Employees']<=500)) & (df_final_MQLs_Auto['company_category_industry']!='Construction & Engineering') 
+    df_final_MQLs_SQL = df_final_MQLs_Auto[((df_final_MQLs_Auto['Number of Employees'].isnull()) | (df_final_MQLs_Auto['Number of Employees']<=500)) & (df_final_MQLs_Auto['hs_mrr']<=100) 
+                                           &(df_final_MQLs_Auto['sql_auth_info']>0)
+                                           &(df_final_MQLs_Auto['company_category_industry']!='Construction & Engineering') 
                                            &(df_final_MQLs_Auto['company_category_industry']!='Renewable Electricity')
                                            &(df_final_MQLs_Auto['company_category_industry']!='Electrical Equipment')
                                            &(df_final_MQLs_Auto['company_category_industry']!='Gas Utilities')
                                            &(df_final_MQLs_Auto['company_category_industry']!='Electric Utilities')
                                            &(df_final_MQLs_Auto['company_category_industry']!='Utilities')
-                                           & (df_final_MQLs_Auto['hs_mrr']<=50) & (df_final_MQLs_Auto['auth_source']!='smartsheet') & (df_final_MQLs_Auto['sql_auth_info']>0)]
+                                           &(df_final_MQLs_Auto['auth_source']!='smartsheet')]
+    
     df_final_MQLs_SQL['reason'] = 'Has or Attempted SQL Database Integration - Check Mixpanel activity dashboard.'
 
     #MQL cap
-    df_final_MQLs_SQL = df_final_MQLs_SQL.sort_values('editor',ascending=False).head(7)
+#     df_final_MQLs_SQL = df_final_MQLs_SQL.sort_values('editor',ascending=False).head(2) #move to 7 from 3
 
-    #generate email, reason, mrr and mixpanel id lists
+    #generate email, reason, mrr, mixpanel id and last seen lists
     email_list = df_final_MQLs_SQL.Email.tolist()
     reason_list = df_final_MQLs_SQL.reason.tolist()
     MRR_list = df_final_MQLs_SQL.hs_mrr.tolist()
     mixpanel_distinct_id_list = df_final_MQLs_SQL.mixpanel_distinct_id.tolist()
+    last_seen_list = df_final_MQLs_SQL.last_seen.tolist()
     
     #push MQLs to hubspot
-    push_mqls_to_hubspot(email_list, reason_list, MRR_list, mixpanel_distinct_id_list, 'sql') 
+#     push_mqls_to_hubspot(email_list, reason_list, MRR_list, mixpanel_distinct_id_list, last_seen_list, 'sql') 
+    push_leads_to_intercom(email_list, 'sql')
     print('Total SQL MQLs:', len(email_list))
 
     
@@ -1558,7 +1673,7 @@ def push_company_attributes_MQLs(df_final_MQLs):
     
     
     Parameters
-    ----------
+    --------
     
     df_final_MQLs: dataframe
         Dataframe contains MQL classified app creator info, activity from Mixpanel, and MQL method.
@@ -1582,16 +1697,18 @@ def push_company_attributes_MQLs(df_final_MQLs):
 
     
     #MQL cap
-    df_final_MQLs_Company_Attributes = df_final_MQLs_Company_Attributes.head(5)
+#     df_final_MQLs_Company_Attributes = df_final_MQLs_Company_Attributes.head(2)
     
-    #generate email, reason, mrr and mixpanel id lists
+    #generate email, reason, mrr, mixpanel id, and last seen lists
     email_list = df_final_MQLs_Company_Attributes.Email.tolist()
     reason_list = df_final_MQLs_Company_Attributes.reason.tolist()
     MRR_list = df_final_MQLs_Company_Attributes.hs_mrr.tolist()
     mixpanel_distinct_id_list = df_final_MQLs_Company_Attributes.mixpanel_distinct_id.tolist()
+    last_seen_list = df_final_MQLs_Company_Attributes.last_seen.tolist()
     
     #push MQLs to hubspot
-    push_mqls_to_hubspot(email_list, reason_list, MRR_list, mixpanel_distinct_id_list, 'company_attributes') 
+#     push_mqls_to_hubspot(email_list, reason_list, MRR_list, mixpanel_distinct_id_list, last_seen_list, 'company_attributes') 
+    push_leads_to_intercom(email_list, 'company_attributes')
     print('Total Company Attributes MQLs:', len(email_list))
     
 def push_activity_MQLs(df_final_MQLs):
@@ -1624,7 +1741,7 @@ def push_activity_MQLs(df_final_MQLs):
     df_final_MQLs_Activity = df_final_MQLs[df_final_MQLs['Method']=='Activity']
     
     #MQL cap
-    activity_mql_list = df_final_MQLs_Activity.sort_values('editor',ascending=False).head(5)
+    activity_mql_list = df_final_MQLs_Activity.sort_values('editor',ascending=False)
     
     #create list of features used in model
     editor_list = activity_mql_list.editor.tolist()
@@ -1650,17 +1767,19 @@ def push_activity_MQLs(df_final_MQLs):
         reason_list.append(message)
     activity_mql_list['reasons'] = reason_list
     
-    #generate email, reason, mrr and mixpanel id lists
+    #generate email, reason, mrr, mixpanel id, and last seen lists
     reason_list = activity_mql_list['reasons'].tolist()
     email_list = activity_mql_list['Email'].tolist()
     MRR_list = activity_mql_list.hs_mrr.tolist()
     mixpanel_distinct_id_list = activity_mql_list.mixpanel_distinct_id.tolist()
+    last_seen_list = activity_mql_list.last_seen.tolist()
     
     #push MQLs to hubspot
-    push_mqls_to_hubspot(email_list, reason_list, MRR_list, mixpanel_distinct_id_list, 'activity')    
+#     push_mqls_to_hubspot(email_list, reason_list, MRR_list, mixpanel_distinct_id_list, last_seen_list, 'activity') 
+    push_leads_to_intercom(email_list, 'activity')
     print('Total Activity MQLs:', len(email_list))
 
-
+    
 def generate_mqls(loaded_model):
 
     """
@@ -1685,8 +1804,8 @@ def generate_mqls(loaded_model):
         Dataframe contains MQL classified app creator info, activity from Mixpanel, and MQL method.
         
     
-    """
-    
+    """ 
+     
     #pull information for all exist app creators in Mixpanel
     df_users = user_pull()
     
@@ -1701,7 +1820,7 @@ def generate_mqls(loaded_model):
     df_final_MQLs = model_execution(df_final, loaded_model) #execute model on the data
     df_final_MQLs = prep_MQL_data(df_final_MQLs) #prep MQL data
 
-    #push generated MQLs to hubspot
+    #push generated MQLs to hubspot. Remove industry as a qualification reason to reduce volume
     push_ABM_MQLs(df_final_MQLs) #ABM generated MQLs
     push_construction_MQLs(df_final_MQLs) #construction generated MQLs
     push_Renewable_Electricity_MQLs(df_final_MQLs) #renewable electricity generated MQLs
@@ -1709,11 +1828,11 @@ def generate_mqls(loaded_model):
     push_Gas_Utilities_MQLs(df_final_MQLs) #gas utilities generated MQLs
     push_Electric_Utilities_MQLs(df_final_MQLs) #electric utilities generated MQLs
     push_Utilities_MQLs(df_final_MQLs) #utilities generated MQLs
+    push_mrr_MQLs(df_final_MQLs) #MRR generated MQLs
     push_company_size_MQLs(df_final_MQLs) #company size generated MQLs
     push_smartsheet_MQLs(df_final_MQLs) #smartsheet generated MQLs
     push_sql_MQLs(df_final_MQLs) #sql auth info generated MQLs
     push_company_attributes_MQLs(df_final_MQLs) #company attributes generated MQLs
-    push_mrr_MQLs(df_final_MQLs) #MRR generated MQLs
     push_activity_MQLs(df_final_MQLs) #activity generated MQLs
 
     return df_final_MQLs
