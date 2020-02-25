@@ -577,15 +577,15 @@ def data_prep(df_final):
     #log contact scores
     df_final['activity_score'] = score_list
     
-    #hold for Method column
+    #hold for Method column 
     df_final['Method'] = ''
 
     #remove contacts without emails
     df_final = df_final[~df_final.Email.isnull()]
     
     #filter out appmaker accounts
-    df_final = df_final[~df_final['Email'].str.contains('@papamoonvineyards.com|@cartcode.co.uk|@thesocialelement.agency|@exinity.co|@digitalistgroup.com|@parkwood-holdings.co.uk|@smartspin.com|@prizma.ca|@apexref.pro|@icoa.it|@sfxc.edu.hk|@cloudcomrade.com|@bizvergence.com|@clarkstownpd.org|@backyardbrians.com|@gdevs.co.za|@allenpsychiatry.com|@smiso-hordaland.no|@hpgresources.com|@toponemortgage.net|@shapemeasure.com|@streit.me|@fce.org.za|@dev.sotec.eu|@ssnationalwaste.com|@cloudwuerdig.com|@directsupply.com|@savantx.com|@wyo.gov|@sashservices.com|@caimanproducts.com|@summithelicopters.com|@randdtaxcredits.ie|@gbncoffee.com|@1stidea.co|@escuelasanpedro.com|@tscloud.com.my|@eikontechnology.com|@go-drei.de|@cloudservices4mittelstand.de|@gcctechllc.com|@arcatelecom.com|@securedata.com|@rts.richmond.sch.uk|@coversegypt.com|@montmush.com|@gregoryschool.org|@globe.com.ph|@thefamilyplace.co.uk|@swgapps.com|@equicom.hu|@impetusdigital.com|@tidalmigrations.com|@dgmdomains.com|@techno-digm.com|@redfoxid.co.uk|@faceandeye.com|@ozarkkoalaeco.com|@hmv.co.uk|@fgl-svcs.com|@cargillsbank.com|@apc-apps.com|@google.com|@beforeafter.com|@getbusygardening|@irri.org|@seiai.ed.jp|@shoprite.co.za|@muskegonisd.org|@arc-alternatives.com|@bem.med.br|@laurent-wattieaux.com|@rentokil.com|@essilor.fr|@essilor.com|@ext.essilor.com|@revthink.com|@cyc.sg|@nielsen.com')]
-    
+    df_final = df_final[~df_final['Email'].str.contains('@papamoonvineyards.com|@cartcode.co.uk|@thesocialelement.agency|@exinity.co|@digitalistgroup.com|@parkwood-holdings.co.uk|@smartspin.com|@prizma.ca|@apexref.pro|@icoa.it|@sfxc.edu.hk|@cloudcomrade.com|@bizvergence.com|@clarkstownpd.org|@backyardbrians.com|@gdevs.co.za|@allenpsychiatry.com|@smiso-hordaland.no|@hpgresources.com|@toponemortgage.net|@shapemeasure.com|@streit.me|@fce.org.za|@dev.sotec.eu|@ssnationalwaste.com|@cloudwuerdig.com|@directsupply.com|@savantx.com|@wyo.gov|@sashservices.com|@caimanproducts.com|@summithelicopters.com|@randdtaxcredits.ie|@gbncoffee.com|@1stidea.co|@escuelasanpedro.com|@tscloud.com.my|@eikontechnology.com|@go-drei.de|@cloudservices4mittelstand.de|@gcctechllc.com|@arcatelecom.com|@securedata.com|@rts.richmond.sch.uk|@coversegypt.com|@montmush.com|@gregoryschool.org|@globe.com.ph|@thefamilyplace.co.uk|@swgapps.com|@equicom.hu|@impetusdigital.com|@tidalmigrations.com|@dgmdomains.com|@techno-digm.com|@redfoxid.co.uk|@faceandeye.com|@ozarkkoalaeco.com|@hmv.co.uk|@fgl-svcs.com|@cargillsbank.com|@apc-apps.com|@google.com|@beforeafter.com|@getbusygardening|@irri.org|@seiai.ed.jp|@shoprite.co.za|@muskegonisd.org|@arc-alternatives.com|@bem.med.br|@laurent-wattieaux.com|@rentokil.com|@essilor.fr|@essilor.com|@ext.essilor.com|@revthink.com|@cyc.sg|@nielsen.com|@hexacorp.com|@mile.cloud|@edwardsgrounds.co.uk|@santanderleasing.pl|@tokyo-shoseki.co.jp|@cimac.edu.mx|@trueshoring.com|@armonicos.co.jp|@solutionsfiducie.fr|@dev.gopomelo.com|@gopomelo.com|@sylveco.pl|@marquardtmechanical.com|@dechini.com.pe|@ntcgr.com|@aci.it|@one-line.com|@excent.fr|@rqaudiovisual.com|@gnp.com.mx|@armellini.com|@summitps.org')]
+     
     #turn mrr field into int
     df_final.loc[(df_final.hs_mrr == '')|(df_final.hs_mrr.isnull()), 'hs_mrr'] = 0
     df_final['hs_mrr'] = pd.to_numeric(df_final.hs_mrr) 
