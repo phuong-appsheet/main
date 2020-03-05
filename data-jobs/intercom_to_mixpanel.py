@@ -10,6 +10,7 @@ import json
 import requests
 import os
 from pt_utils.utils import send_email
+import time
 
 #import credentials object
 mp = Mixpanel(os.environ.get('MIXPANEL_KEY'))
@@ -18,7 +19,6 @@ api_creator_secret = os.getenv('MIXPANEL_CREATOR_KEY')
 api_user_secret = os.environ.get('MIXPANEL_USER_KEY')
 hubspot_key = os.environ.get('HUBSPOT_KEY')
 intercom_key = os.environ.get('INTERCOM_KEY')
-
 
 
 
@@ -97,30 +97,34 @@ def pull_intercom_users():
     loop = True
     while loop:
 
-        #generate request
-        response = requests.get(
-            'https://api.intercom.io/users/scroll',
-            params={'q': 'requests+language:python','scroll_param': scroll_param},
-            headers={'Accept': 'application/json','Authorization': 'Bearer '+ intercom_key},
-        )
+        try:
+            
+            #generate request
+            response = requests.get(
+                'https://api.intercom.io/users/scroll',
+                params={'q': 'requests+language:python','scroll_param': scroll_param},
+                headers={'Accept': 'application/json','Authorization': 'Bearer '+ intercom_key},
+            )
 
-        #process results to record emails, tags, company urls, and use cases
-        if 'users' in response.json().keys():
-            for user in response.json()['users']:
-                user_tags = user['tags']['tags']
-                if user_tags != []:
-                    user_tags_list.append(user_tags)
-                    user_email_list.append(user['email'])
-                if 'custom_attributes'in user.keys():
-                    if 'company_url' in user['custom_attributes'].keys():
-                        company_url_email_list.append(user['email'])
-                        company_url_list.append(user['custom_attributes']['company_url'])
-                if 'Use_Case' in user['custom_attributes'].keys():
-                    use_case_email_list.append(user['email'])
-                    use_case_list.append(user['custom_attributes']['Use_Case'])
+            #process results to record emails, tags, company urls, and use cases
+            if 'users' in response.json().keys():
+                for user in response.json()['users']:
+                    user_tags = user['tags']['tags']
+                    if user_tags != []:
+                        user_tags_list.append(user_tags)
+                        user_email_list.append(user['email'])
+                    if 'custom_attributes'in user.keys():
+                        if 'company_url' in user['custom_attributes'].keys():
+                            company_url_email_list.append(user['email'])
+                            company_url_list.append(user['custom_attributes']['company_url'])
+                    if 'Use_Case' in user['custom_attributes'].keys():
+                        use_case_email_list.append(user['email'])
+                        use_case_list.append(user['custom_attributes']['Use_Case'])
 
-        else:
-            loop = False
+            else:
+                loop = False
+        except:
+            time.sleep(30)
 
     #generate tag dataframe
     data = {'email': user_email_list, 'user_tags': user_tags_list}
@@ -232,8 +236,8 @@ def user_pull():
             ).group_by(
                 keys=[
                     "e.properties.$email",
-                    "e.properties.$username",
-                    "e.properties.company_domain"
+                    "e.properties.company_domain",
+                    "e.properties.$distinct_id"
                 ],
                 accumulator=Reducer.count()
             )
@@ -241,17 +245,17 @@ def user_pull():
 
     #initiate list to store emails, user IDs, and company domains
     email_list = []
-    user_id_list = []
     company_domain_list = []
+    distinct_id_list = []
     
     #process query results
     for row in query.send():
         email_list.append(row['key'][0])
-        user_id_list.append(row['key'][1])
-        company_domain_list.append(row['key'][2])
+        company_domain_list.append(row['key'][1])
+        distinct_id_list.append(row['key'][2])
         
     #create dataframe 
-    data = {'email':email_list, 'user_id': user_id_list, 'company_domain': company_domain_list}
+    data = {'email':email_list, 'company_domain': company_domain_list, 'distinct_id' : distinct_id_list}
     df_users = pd.DataFrame(data=data)
     
     return df_users
@@ -287,15 +291,14 @@ def update_mixpanel_users(df_users_ps):
         
     """
     
-    #conver user_id to int
-    df_users_ps['user_id'] = df_users_ps.user_id.astype(int)
+ 
 
     #extract user ID and tag lists
-    user_id_list = df_users_ps.user_id.tolist()
+    distinct_id_list = df_users_ps.distinct_id.tolist()
     tag_list = df_users_ps.user_tag_names.tolist()
     
     #update Mixpanel app creator profiles
-    for user_id,tags in zip(user_id_list,tag_list):
+    for distinct_id,tags in zip(distinct_id_list,tag_list):
         
         try:
             
@@ -303,7 +306,7 @@ def update_mixpanel_users(df_users_ps):
             params = {'intercom_tags': tags}
             
             #execute call
-            mp.people_set(user_id, params, meta = {'$ignore_time' : 'true', '$ip' : 0})
+            mp.people_set(distinct_id, params, meta = {'$ignore_time' : 'true', '$ip' : 0})
             
         except Exception as e: 
             print(e)
@@ -346,7 +349,7 @@ def execute_intercom_tag_updates(df_user_tags, df_users):
     df_user_tags = parse_intercom_tag_names(df_user_tags)
 
     #only keep relevant columns
-    df_users = df_users[['email','user_id']]
+    df_users = df_users[['email','distinct_id']]
 
     #merge Mixpanel app creator info and Intercom app creator info with associated tags
     df_users_ps = pd.merge(df_users, df_user_tags, on='email', how='left' )
@@ -361,7 +364,7 @@ def execute_intercom_tag_updates(df_user_tags, df_users):
 
 
 
-def get_clearbit_data(company_url_list, user_id_list):
+def get_clearbit_data(company_url_list, distinct_id_list):
 
     """
     
@@ -374,8 +377,8 @@ def get_clearbit_data(company_url_list, user_id_list):
     company_url_list: list
         List of company urls.
         
-    user_id_list: list
-        List of user IDs.
+    distinct_id_list: list
+        List of distinct IDs.
         
         
     
@@ -398,7 +401,7 @@ def get_clearbit_data(company_url_list, user_id_list):
     """
     
     #initiate lists to store successfully enriched user IDs and domains.
-    successful_user_id_list = []
+    successful_distinct_id_list = []
     successful_domain_list = []
 
 
@@ -407,7 +410,7 @@ def get_clearbit_data(company_url_list, user_id_list):
 
         #get user ID and company url
         company_url = company_url_list[i]
-        user_id = user_id_list[i]
+        distinct_id = distinct_id_list[i]
 
         #checking Clearbit enrichment service
         try:
@@ -425,7 +428,7 @@ def get_clearbit_data(company_url_list, user_id_list):
                 params = {}
 
                 #record successfully enriched creators
-                successful_user_id_list.append(user_id)
+                successful_distinct_id_list.append(distinct_id)
                 successful_domain_list.append(company_url)
 
                 #check if nested company key is not None
@@ -604,14 +607,12 @@ def get_clearbit_data(company_url_list, user_id_list):
                     if company_name != None:
                         params['company_name'] = company_name
 
-                #convert user ID to int
-                user_id = int(user_id)
                 
                 #execute update
-                mp.people_set(user_id, params, meta = {'$ignore_time' : 'true', '$ip' : 0})
+                mp.people_set(distinct_id, params, meta = {'$ignore_time' : 'true', '$ip' : 0})
         
     #generate dataframe
-    data = {'successful_user_id': successful_user_id_list, 'successful_domain': successful_domain_list}
+    data = {'successful_distinct_id': successful_distinct_id_list, 'successful_domain': successful_domain_list}
     df_clearbit_enriched = pd.DataFrame(data)
     
     return df_clearbit_enriched
@@ -662,8 +663,8 @@ def execute_intercom_company_updates(df_company_url, df_users):
 
     #extract company data from Clearbit and update Mixpanel app creator profiles
     company_urls_final = df_users_intercom_merge['company_url'].tolist()
-    user_id_final = df_users_intercom_merge['user_id'].tolist()
-    df_clearbit_enriched_company_url_push = get_clearbit_data(company_urls_final, user_id_final)
+    distinct_id_final = df_users_intercom_merge['distinct_id'].tolist()
+    df_clearbit_enriched_company_url_push = get_clearbit_data(company_urls_final, distinct_id_final)
     
     return df_clearbit_enriched_company_url_push
 
@@ -710,19 +711,16 @@ def execute_intercom_use_case_updates(df_user_use_case, df_users):
 
     #extract user IDs and use cases to list
     Use_Case_final = df_users_intercom_merge['Use_Case'].tolist()
-    user_id_final = df_users_intercom_merge['user_id'].tolist()
+    distinct_id_final = df_users_intercom_merge['distinct_id'].tolist()
     
     #update Mixpanel app creator profiles with use cases
-    for user_id,use_case in zip(user_id_final, Use_Case_final):
+    for distinct_id,use_case in zip(distinct_id_final, Use_Case_final):
         
         #populate params
         params = {'use_case': use_case}
         
-        #convert user ID to int
-        user_id = int(user_id)
-        
         #execute update
-        mp.people_set(user_id, params, meta = {'$ignore_time' : 'true', '$ip' : 0})
+        mp.people_set(distinct_id, params, meta = {'$ignore_time' : 'true', '$ip' : 0})
          
     
     return df_users_intercom_merge
@@ -748,7 +746,7 @@ def main():
     None 
     
     """
-    
+      
     #send initial email
     send_email('Initiate Intercom-Mixpanel Update')
     
@@ -762,11 +760,16 @@ def main():
     df_tags_pushed = execute_intercom_tag_updates(df_user_tags, df_users)
     df_clearbit_enriched_company_url_push = execute_intercom_company_updates(df_user_company_url, df_users)
     df_use_case_push = execute_intercom_use_case_updates(df_user_use_case, df_users)
-    
+
+
+
     #send complete email
     send_email('Intercom-Mixpanel Update Completed')
     
     return df_use_case_push
+
+
+
 
 
 #execute updates
