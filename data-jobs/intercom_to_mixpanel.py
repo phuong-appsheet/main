@@ -117,9 +117,9 @@ def pull_intercom_users():
                         if 'company_url' in user['custom_attributes'].keys():
                             company_url_email_list.append(user['email'])
                             company_url_list.append(user['custom_attributes']['company_url'])
-                    if 'Use_Case' in user['custom_attributes'].keys():
-                        use_case_email_list.append(user['email'])
-                        use_case_list.append(user['custom_attributes']['Use_Case'])
+                        if 'Use_Case' in user['custom_attributes'].keys():
+                            use_case_email_list.append(user['email'])
+                            use_case_list.append(user['custom_attributes']['Use_Case'])
 
             else:
                 loop = False
