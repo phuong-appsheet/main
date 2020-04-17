@@ -292,7 +292,7 @@ def generate_data_range_df(date_beginning_quarter):
     return df_date_range
 
 
-def process_data(df_date_range, df_contact_forms, df_hubspot_deals, df_BAP_GCP_hubspot_deals): 
+def process_data(df_date_range, df_contact_forms, df_hubspot_deals, df_BAP_hubspot_deals, df_GCP_hubspot_deals): 
     
     """
     Create dataframe containing quarter-to-date aggregated sums of the metrics.
@@ -349,7 +349,8 @@ def process_data(df_date_range, df_contact_forms, df_hubspot_deals, df_BAP_GCP_h
     df_final = pd.merge(df_final, df_contact_forms_no_existing_account_deal_open, on='date', how='left' )
     df_final = pd.merge(df_final, df_contact_forms_existing_account_deal_open, on='date', how='left' )
     df_final = pd.merge(df_final, df_hubspot_deals, on='date', how='left' )
-    df_final = pd.merge(df_final, df_BAP_GCP_hubspot_deals, on='date', how='left' )
+    df_final = pd.merge(df_final, df_BAP_hubspot_deals, on='date', how='left' )
+    df_final = pd.merge(df_final, df_GCP_hubspot_deals, on='date', how='left' )
     
     
     #fill columns null values with 0s
@@ -358,12 +359,13 @@ def process_data(df_date_range, df_contact_forms, df_hubspot_deals, df_BAP_GCP_h
     df_final['forms_existing_account'] = df_final.forms_existing_account.fillna(0)
     df_final['forms_no_existing_account'] = df_final.forms_no_existing_account.fillna(0)
     df_final['deal_value'] = df_final.deal_value.fillna(0)
-    df_final['deal_BAP_GCP'] = df_final.deal_BAP_GCP.fillna(0)
+    df_final['deal_BAP'] = df_final.deal_BAP.fillna(0)
+    df_final['deal_GCP'] = df_final.deal_GCP.fillna(0)
 
     #take cumulative sums of the metrics
-    df_final_cumsum = df_final[['forms_no_existing_account', 'forms_existing_account', 'deal_open_no_existing_account', 'deal_open_existing_account', 'deal_value', 'deal_BAP_GCP']].cumsum(axis=0)
+    df_final_cumsum = df_final[['forms_no_existing_account', 'forms_existing_account', 'deal_open_no_existing_account', 'deal_open_existing_account', 'deal_value', 'deal_BAP', 'deal_GCP']].cumsum(axis=0)
     df_final_cumsum['date'] = df_final['date']
-    df_final_cumsum = df_final_cumsum[['date', 'forms_no_existing_account', 'forms_existing_account', 'deal_open_no_existing_account', 'deal_open_existing_account', 'deal_value', 'deal_BAP_GCP']]
+    df_final_cumsum = df_final_cumsum[['date', 'forms_no_existing_account', 'forms_existing_account', 'deal_open_no_existing_account', 'deal_open_existing_account', 'deal_value', 'deal_BAP', 'deal_GCP']]
 
     return df_final_cumsum
 
@@ -440,7 +442,8 @@ def update_google_sheet(df_final_cumsum, main_sheet):
     deal_open_no_existing_account_list = df_final_cumsum.deal_open_no_existing_account.tolist()
     deal_open_existing_account_list = df_final_cumsum.deal_open_existing_account.tolist()
     deal_value_list = df_final_cumsum.deal_value.tolist()
-    deal_BAP_GCP_list = df_final_cumsum.deal_BAP_GCP.tolist()
+    deal_BAP_list = df_final_cumsum.deal_BAP.tolist()
+    deal_GCP_list = df_final_cumsum.deal_GCP.tolist()
     date_list = df_final_cumsum.date.tolist()
 
     #make updates to Google Sheet
@@ -454,8 +457,9 @@ def update_google_sheet(df_final_cumsum, main_sheet):
             main_sheet.update_cell(index,3,forms_no_existing_account_list[i])
             main_sheet.update_cell(index,4,deal_open_existing_account_list[i])
             main_sheet.update_cell(index,5,deal_open_no_existing_account_list[i])
-            main_sheet.update_cell(index,6,deal_BAP_GCP_list[i])
-            main_sheet.update_cell(index,7,deal_value_list[i])
+            main_sheet.update_cell(index,6,deal_BAP_list[i])
+            main_sheet.update_cell(index,7,deal_GCP_list[i])
+            main_sheet.update_cell(index,8,deal_value_list[i])
 
             i += 1
             time.sleep(5)
@@ -536,7 +540,8 @@ def get_hubspot_deals():
     deal_id_list_final = []
     deal_value_list = []
     time_value_list = []
-    deal_BAP_GCP_list = []
+    deal_BAP_list = []
+    deal_GCP_list = []
 
     #loop through response to extract deal information
     i=0
@@ -557,7 +562,8 @@ def get_hubspot_deals():
             
             #initial deal value and BAP/GCP indicator
             deal_value = 0
-            deal_BAP_GCP = 0
+            deal_BAP = 0
+            deal_GCP = 0
             
             #extract deal value (Has two fields. amount_in_home_currency is more reliable if available) and BAP/GCP indicator
             if 'hs_closed_amount_in_home_currency' in deal_keys:
@@ -570,9 +576,13 @@ def get_hubspot_deals():
                 if value!='':
                     deal_value = float(value)
                     
-            if 'co_seller' in deal_keys:
-                if deal['properties']['co_seller']['value'] != '':
-                    deal_BAP_GCP = 1
+            if 'deal_source' in deal_keys:
+                deal_source = deal['properties']['deal_source']['value']
+                if deal_source != '':
+                    if deal_source == 'BAP Sourced':
+                        deal_BAP = 1
+                    if (deal_source == 'GCP Sourced') | (deal_source == 'GSuite Sourced'):
+                        deal_GCP = 1
 
             #extract deal open timestamp
             timestamp = ''.join(deal['properties']['createdate']['value'].split())[:-3]
@@ -585,7 +595,8 @@ def get_hubspot_deals():
                 deal_id_list_final.append(deal_id)
                 deal_value_list.append(deal_value)
                 time_value_list.append(time_value)
-                deal_BAP_GCP_list.append(deal_BAP_GCP)
+                deal_BAP_list.append(deal_BAP)
+                deal_GCP_list.append(deal_GCP)
             i+=1
             
 
@@ -598,21 +609,29 @@ def get_hubspot_deals():
     data = {'deal_id': deal_id_list_final, 'time_value': time_value_list, 'deal_value': deal_value_list}
     df_hubspot_deals = pd.DataFrame(data)
     
-    #generate deal BAP_GCP dataframe
-    data = {'deal_id': deal_id_list_final, 'time_value': time_value_list, 'deal_BAP_GCP': deal_BAP_GCP_list}
-    df_BAP_GCP_hubspot_deals = pd.DataFrame(data)
+    #generate deal BAP dataframe
+    data = {'deal_id': deal_id_list_final, 'time_value': time_value_list, 'deal_BAP': deal_BAP_list}
+    df_BAP_hubspot_deals = pd.DataFrame(data)
+    
+    #generate deal BAP dataframe
+    data = {'deal_id': deal_id_list_final, 'time_value': time_value_list, 'deal_GCP': deal_GCP_list}
+    df_GCP_hubspot_deals = pd.DataFrame(data)
     
     #convert timestamp to datetime
     df_hubspot_deals = df_hubspot_deals.rename(columns={'time_value': 'date'})
     df_hubspot_deals['date'] = df_hubspot_deals['date'].apply(lambda x: x.date())
-    df_BAP_GCP_hubspot_deals = df_BAP_GCP_hubspot_deals.rename(columns={'time_value': 'date'})
-    df_BAP_GCP_hubspot_deals['date'] = df_BAP_GCP_hubspot_deals['date'].apply(lambda x: x.date())
+    df_BAP_hubspot_deals = df_BAP_hubspot_deals.rename(columns={'time_value': 'date'})
+    df_BAP_hubspot_deals['date'] = df_BAP_hubspot_deals['date'].apply(lambda x: x.date())
+    df_GCP_hubspot_deals = df_GCP_hubspot_deals.rename(columns={'time_value': 'date'})
+    df_GCP_hubspot_deals['date'] = df_GCP_hubspot_deals['date'].apply(lambda x: x.date())
 
     #calculate metric values for each date
     df_hubspot_deals = df_hubspot_deals.groupby('date').deal_value.sum().reset_index()
-    df_BAP_GCP_hubspot_deals = df_BAP_GCP_hubspot_deals.groupby('date').deal_BAP_GCP.sum().reset_index()
+    df_BAP_hubspot_deals = df_BAP_hubspot_deals.groupby('date').deal_BAP.sum().reset_index()
+    df_GCP_hubspot_deals = df_GCP_hubspot_deals.groupby('date').deal_GCP.sum().reset_index()
 
-    return df_hubspot_deals, df_BAP_GCP_hubspot_deals
+
+    return df_hubspot_deals, df_BAP_hubspot_deals, df_GCP_hubspot_deals
    
     
 def main():
@@ -647,13 +666,13 @@ def main():
     #pull contact form submissions, number of deals associated to contacts, and number of BAP/GCP sourced deals in Q2 2020
     df_contact_forms = pull_contact_forms()
     df_associated_deals = pull_hubspot_contacts(df_contact_forms)
-    df_hubspot_deals, df_BAP_GCP_hubspot_deals = get_hubspot_deals()
+    df_hubspot_deals, df_BAP_hubspot_deals, df_GCP_hubspot_deals = get_hubspot_deals()
 
     #merge contact forms and associated deals contacts
     df_contact_forms = pd.merge(df_contact_forms, df_associated_deals, on='email', how='left')
 
     #process data to generate df with cumulative sums of all the datapoints
-    df_final_cumsum = process_data(df_date_range, df_contact_forms, df_hubspot_deals, df_BAP_GCP_hubspot_deals)
+    df_final_cumsum = process_data(df_date_range, df_contact_forms, df_hubspot_deals, df_BAP_hubspot_deals, df_GCP_hubspot_deals)
 
     #authenticate to Google drive API and update spreadsheet
     main_sheet = auth_google_services()
