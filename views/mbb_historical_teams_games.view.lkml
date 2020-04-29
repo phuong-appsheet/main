@@ -96,4 +96,11 @@ view: mbb_historical_teams_games {
     type: count
     drill_fields: [opp_name, name]
   }
+
+  measure: average_game_attendance{
+    type:  average
+    sql: ${attendance} ;;
+  }
+
+
 }
