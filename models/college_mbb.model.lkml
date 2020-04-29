@@ -16,7 +16,9 @@ persist_with: college_mbb_default_datagroup #points to the datagroup "college_mb
 explore: connection_reg_r3 {}
 
 
-
+###NEED TO ADD DATA TESTS!!###
+###KEEP BUILDING EXPLORES###
+###START BUILDING DASHBOARDS###
 
 #mascots can be mapped to mbb_teams and team_colors
 explore: mascots {  #add an option to the Explore menu based on the view mascots. Explore needs to reference the view name, not its file name
