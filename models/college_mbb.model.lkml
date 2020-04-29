@@ -13,6 +13,10 @@ datagroup: college_mbb_default_datagroup {
 persist_with: college_mbb_default_datagroup #points to the datagroup "college_mbb_default_datagroup" caching policy
 
 
+explore: connection_reg_r3 {}
+
+
+
 
 #mascots can be mapped to mbb_teams and team_colors
 explore: mascots {  #add an option to the Explore menu based on the view mascots. Explore needs to reference the view name, not its file name
@@ -20,7 +24,7 @@ explore: mascots {  #add an option to the Explore menu based on the view mascots
   join:  mbb_teams { #includes explore name that you're joining
     type: left_outer
     sql_on:  ${mascots.id} = ${mbb_teams.id} ;;
-    relationship: one_to_one #order goes from the other explore to this explore. In this case, mbb_teams to mascots.
+    relationship: one_to_one #order goes from this explore to the other explore. In this case, mascots to mbb_teams.
   }
   join: team_colors {
     type: left_outer
@@ -29,18 +33,22 @@ explore: mascots {  #add an option to the Explore menu based on the view mascots
   }
 }
 
-explore: mbb_teams {}
+explore: mbb_teams {
+  from:  mbb_teams
+  join:  mascots {
+    type: left_outer
+    sql_on:  ${mascots.id} = ${mbb_teams.id} ;;
+    relationship: one_to_one
+  }
+  join: mbb_historical_teams_games {
+    type:  left_outer
+    sql_on: ${mbb_teams.id} = ${mbb_historical_teams_games.team_id};;
+    relationship: one_to_many
+  }
+
+}
 
 
-
-
-
-
-
-
-
-
-explore: connection_reg_r3 {}
 
 explore: mbb_games_sr {}
 
