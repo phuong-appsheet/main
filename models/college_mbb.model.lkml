@@ -13,12 +13,19 @@ datagroup: college_mbb_default_datagroup {
 persist_with: college_mbb_default_datagroup #points to the datagroup "college_mbb_default_datagroup" caching policy
 
 
+
+#mascots can be mapped to mbb_teams and team_colors
 explore: mascots {  #add an option to the Explore menu based on the view mascots. Explore needs to reference the view name, not its file name
   from:  mascots    #not necessary in this case, but you can indicate which view the Explore is referring to if it has a different name than the view.
   join:  mbb_teams { #includes explore name that you're joining
     type: left_outer
     sql_on:  ${mascots.id} = ${mbb_teams.id} ;;
     relationship: one_to_one #order goes from the other explore to this explore. In this case, mbb_teams to mascots.
+  }
+  join: team_colors {
+    type: left_outer
+    sql_on:  ${mascots.id} = ${team_colors.id} ;;
+    relationship:  one_to_one
   }
 }
 
